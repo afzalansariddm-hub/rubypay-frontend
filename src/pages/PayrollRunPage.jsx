@@ -21,6 +21,8 @@ export default function PayrollRunPage() {
   const [backConfirmOpen, setBackConfirmOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [persistGlobal, setPersistGlobal] = useState(false);
+  const [varianceSortDirection, setVarianceSortDirection] = useState("");
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const {
     currentRun,
@@ -35,6 +37,7 @@ export default function PayrollRunPage() {
     fetchRun,
     fetchRuns,
     setFilter,
+    toggleIssueType,
     selectRow,
     selectStage,
     goToPreviousStage,
@@ -43,6 +46,7 @@ export default function PayrollRunPage() {
     askCopilot,
     applyAiFix,
     ignoreRowIssue,
+    ignoreAllSimilarIssues,
     fixAllSimilarIssues,
     resolveIssueAction,
     applyEmployeeMapping,
@@ -82,9 +86,46 @@ export default function PayrollRunPage() {
         !filters.searchQuery ||
         row.employee.toLowerCase().includes(filters.searchQuery.toLowerCase());
       const issueMatch = !filters.onlyErrors || Boolean(row.error);
-      return employeeMatch && propertyMatch && queryMatch && issueMatch;
+      const selectedIssueTypes = filters.issueTypes || [];
+      const issueTypeMatch =
+        selectedIssueTypes.length === 0 ||
+        (row.issues || []).some(
+          (issue) => issue.status === "open" && selectedIssueTypes.includes(issue.code),
+        );
+      return employeeMatch && propertyMatch && queryMatch && issueMatch && issueTypeMatch;
     });
   }, [stage, filters]);
+
+  const issueTypeOptions = useMemo(() => {
+    if (!stage) {
+      return [];
+    }
+    const grouped = new Map();
+    stage.rows.forEach((row) => {
+      (row.issues || [])
+        .filter((issue) => issue.status === "open")
+        .forEach((issue) => {
+          const entry = grouped.get(issue.code) || {
+            code: issue.code,
+            label: issue.code,
+            count: 0,
+          };
+          entry.count += 1;
+          grouped.set(issue.code, entry);
+        });
+    });
+    return Array.from(grouped.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [stage]);
+
+  const sortedRows = useMemo(() => {
+    if (stage?.name !== "Mileage Verification" || !varianceSortDirection) {
+      return filteredRows;
+    }
+    const multiplier = varianceSortDirection === "asc" ? 1 : -1;
+    return [...filteredRows].sort(
+      (a, b) => (parseFloat(a.variance || 0) - parseFloat(b.variance || 0)) * multiplier,
+    );
+  }, [filteredRows, stage?.name, varianceSortDirection]);
 
   const isPayrollCalculationStage = stage?.name === "Payroll Calculation";
   const isQBOBillsStage = stage?.name === "QBO Bills";
@@ -134,6 +175,8 @@ export default function PayrollRunPage() {
     try {
       await validateStage({ stageId: stage.id, payload: buildStageSyncedPayload() });
       pushToast("Stage validated");
+    } catch (error) {
+      pushToast(error.message || "Unable to validate stage");
     } finally {
       setIsValidating(false);
     }
@@ -150,6 +193,8 @@ export default function PayrollRunPage() {
       setOverrideOpen(false);
       setReason("");
       pushToast("Stage override applied");
+    } catch (error) {
+      pushToast(error.message || "Unable to apply stage override");
     } finally {
       setIsValidating(false);
     }
@@ -202,14 +247,13 @@ export default function PayrollRunPage() {
       <main className="min-h-screen bg-slate-100 px-4 py-6 md:px-6">
         <div className="w-full space-y-4">
           <div className="h-24 animate-pulse rounded-xl border border-slate-200 bg-white" />
-          <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_320px]">
+          <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
             <div className="h-[560px] animate-pulse rounded-xl border border-slate-200 bg-white" />
             <div className="space-y-3">
               <div className="h-16 animate-pulse rounded-xl border border-slate-200 bg-white" />
               <div className="h-[320px] animate-pulse rounded-xl border border-slate-200 bg-white" />
               <div className="h-[210px] animate-pulse rounded-xl border border-slate-200 bg-white" />
             </div>
-            <div className="h-[560px] animate-pulse rounded-xl border border-slate-200 bg-white" />
           </div>
         </div>
       </main>
@@ -271,7 +315,7 @@ export default function PayrollRunPage() {
           </div>
         </header>
 
-        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)_320px]">
+        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
           <aside className="self-start lg:sticky lg:top-6">
             <StageSidebar stages={currentRun.stages} selectedStageId={stage.id} onSelect={selectStage} />
           </aside>
@@ -326,7 +370,7 @@ export default function PayrollRunPage() {
               </section>
             ) : (
               <>
-                {isDataValidationStage && (
+                {(isDataValidationStage || (currentRun.pendingPropertyApprovals || []).length > 0) && (
                   <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="text-base font-semibold text-slate-800">Mapping & Approval Controls</h3>
@@ -554,11 +598,18 @@ export default function PayrollRunPage() {
                     )}
                   </section>
                 )}
-                <FiltersBar filters={filters} employees={employees} properties={properties} onChange={setFilter} />
+                <FiltersBar
+                  filters={filters}
+                  employees={employees}
+                  properties={properties}
+                  issueTypeOptions={issueTypeOptions}
+                  onChange={setFilter}
+                  onToggleIssueType={toggleIssueType}
+                />
 
                 <WorkspaceTable
                   stageName={stage.name}
-                  rows={filteredRows}
+                  rows={sortedRows}
                   selectedRowId={selectedRowId}
                   highlightedRowIds={highlightedRowIds}
                   employeeOptions={referenceEmployees}
@@ -584,6 +635,17 @@ export default function PayrollRunPage() {
                     fixAllSimilarIssues({ stageId: stage.id, pattern });
                     pushToast("Bulk fix applied");
                   }}
+                  onIgnoreSimilar={(pattern) => {
+                    ignoreAllSimilarIssues({ stageId: stage.id, pattern });
+                    pushToast("Ignored similar issues");
+                  }}
+                  sortState={{ direction: varianceSortDirection }}
+                  onSortVariance={(event) => {
+                    event.stopPropagation();
+                    setVarianceSortDirection((prev) =>
+                      prev === "" ? "desc" : prev === "desc" ? "asc" : "",
+                    );
+                  }}
                   onIssueAction={async ({ rowId, issueCode, action }) => {
                     await resolveIssueAction({ stageId: stage.id, rowId, issueCode, action });
                     pushToast(`Issue marked as ${action}`);
@@ -607,7 +669,15 @@ export default function PayrollRunPage() {
             <AuditTimeline entries={currentRun.auditLog} />
           </section>
 
-          <aside className="self-start lg:sticky lg:top-6">
+        </div>
+        <button
+          className="fixed bottom-4 right-4 z-40 rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-lg hover:bg-slate-800"
+          onClick={() => setCopilotOpen((value) => !value)}
+        >
+          {copilotOpen ? "Hide AI Copilot" : "AI Copilot"}
+        </button>
+        {copilotOpen && (
+          <div className="fixed bottom-16 right-4 z-40 h-[74vh] w-[380px] max-w-[calc(100vw-2rem)]">
             <AICopilotPanel
               messages={aiMessages}
               onAsk={askCopilot}
@@ -633,8 +703,8 @@ export default function PayrollRunPage() {
                       : "Context aware by stage + selected row."
               }
             />
-          </aside>
-        </div>
+          </div>
+        )}
 
       {overrideOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">

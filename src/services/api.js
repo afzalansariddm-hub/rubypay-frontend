@@ -111,4 +111,53 @@ export const api = {
       fileName: match?.[1] || `payroll-${id}.xlsx`,
     };
   },
+  listKnowledgeBaseTables: () => request("/knowledge-base/tables"),
+  getKnowledgeBaseTable: (tableKey) => request(`/knowledge-base/tables/${tableKey}`),
+  createKnowledgeBaseRow: (tableKey, payload) =>
+    request(`/knowledge-base/tables/${tableKey}/rows`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateKnowledgeBaseRow: (tableKey, rowIndex, payload) =>
+    request(`/knowledge-base/tables/${tableKey}/rows/${rowIndex}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  deleteKnowledgeBaseRow: (tableKey, rowIndex) =>
+    request(`/knowledge-base/tables/${tableKey}/rows/${rowIndex}`, {
+      method: "DELETE",
+    }),
+  importKnowledgeBase: (data) =>
+    request("/knowledge-base/import", {
+      method: "POST",
+      body: JSON.stringify({ data }),
+    }),
+  exportKnowledgeBase: async () => {
+    const response = await fetch(`${API_URL}/knowledge-base/export`);
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || "Knowledge base export failed");
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="(.+)"/i);
+    return {
+      blob,
+      fileName: match?.[1] || "knowledgebase.json",
+    };
+  },
+  exportKnowledgeBaseTable: async (tableKey, format = "json") => {
+    const response = await fetch(`${API_URL}/knowledge-base/tables/${tableKey}/export?format=${format}`);
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || "Table export failed");
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="(.+)"/i);
+    return {
+      blob,
+      fileName: match?.[1] || `${tableKey}.${format}`,
+    };
+  },
 };

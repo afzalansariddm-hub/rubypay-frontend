@@ -1,16 +1,13 @@
 import clsx from "clsx";
 
 const hasOpenIssue = (row, code) => (row.issues || []).some((issue) => issue.code === code && issue.status === "open");
+const getIssueGroupCode = (row) => (row.issues || []).find((issue) => issue.status === "open")?.code || "";
 
 const STAGE_COLUMNS = {
   "Data Validation": [
     "employee",
     "property",
     "mappedEmployee",
-    "mappedProperty",
-    "regularHours",
-    "overtimeHours",
-    "holidayInPeriod",
     "firstPaycheck",
   ],
   "Mileage Verification": [
@@ -76,6 +73,9 @@ export default function WorkspaceTable({
   onMapProperty,
   onRequestPropertyApproval,
   onIssueAction,
+  sortState,
+  onSortVariance,
+  onIgnoreSimilar,
 }) {
   const columns = STAGE_COLUMNS[stageName] || ["employee", "property", "regularHours", "overtimeHours", "mileage", "grossPay"];
 
@@ -93,8 +93,30 @@ export default function WorkspaceTable({
         <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
           <tr>
             {columns.map((column) => (
-              <th key={column} className="whitespace-nowrap px-4 py-2.5">
-                {column}
+              <th
+                key={column}
+                className={clsx(
+                  "whitespace-nowrap px-4 py-2.5",
+                  column === "property" && "min-w-[260px]",
+                )}
+              >
+                {column === "variance" ? (
+                  <button
+                    className="inline-flex items-center gap-1 rounded border border-transparent px-1 py-0.5 hover:border-slate-200 hover:bg-white"
+                    onClick={onSortVariance}
+                  >
+                    variance
+                    <span className="text-[10px] text-slate-400">
+                      {sortState?.direction === "asc"
+                        ? "↑"
+                        : sortState?.direction === "desc"
+                          ? "↓"
+                          : "↕"}
+                    </span>
+                  </button>
+                ) : (
+                  column
+                )}
               </th>
             ))}
             <th className="whitespace-nowrap px-4 py-2.5">Issue</th>
@@ -103,7 +125,10 @@ export default function WorkspaceTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const issueGroupCode = getIssueGroupCode(row);
+            const similarPattern = issueGroupCode || row.error || row.warning || "";
+            return (
             <tr
               key={row.id}
               onClick={() => onSelectRow(row.id)}
@@ -117,7 +142,13 @@ export default function WorkspaceTable({
               )}
             >
               {columns.map((column) => (
-                <td key={column} className="px-3 py-2">
+                <td
+                  key={column}
+                  className={clsx(
+                    "px-3 py-2",
+                    column === "property" && "min-w-[260px]",
+                  )}
+                >
                   {stageName === "Data Validation" && column === "mappedEmployee" && hasOpenIssue(row, "EMPLOYEE_NOT_FOUND") ? (
                     <div className="space-y-1">
                       <select
@@ -225,6 +256,50 @@ export default function WorkspaceTable({
               </td>
               <td className="px-4 py-2.5 text-xs">
                 <div className="flex flex-wrap gap-1">
+                  {hasOpenIssue(row, "PROPERTY_NOT_FOUND") && (
+                    <div className="mr-1 min-w-[220px] space-y-1 rounded border border-amber-200 bg-amber-50 p-1.5">
+                      <select
+                        className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-[11px]"
+                        value={row.mappedProperty || ""}
+                        onChange={(event) => onCellChange(row.id, "mappedProperty", event.target.value)}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <option value="">Map property...</option>
+                        {propertyOptions.map((property) => (
+                          <option key={property} value={property}>
+                            {property}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex gap-1">
+                        <button
+                          className="flex-1 rounded border border-sky-200 bg-white px-2 py-1 text-[11px] text-sky-700 hover:bg-sky-50"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (!row.mappedProperty) return;
+                            onMapProperty?.({
+                              sourceProperty: row.sourcePropertyName || row.property,
+                              targetProperty: row.mappedProperty,
+                            });
+                          }}
+                        >
+                          Apply
+                        </button>
+                        <button
+                          className="flex-1 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-100"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRequestPropertyApproval?.({
+                              sourceProperty: row.sourcePropertyName || row.property,
+                              proposedProperty: row.mappedProperty || row.sourcePropertyName || row.property,
+                            });
+                          }}
+                        >
+                          Create New
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {stageName === "Data Validation" &&
                     (row.issues || [])
                       .filter((issue) => issue.code === "RATE_DELTA" && issue.status === "open")
@@ -291,16 +366,28 @@ export default function WorkspaceTable({
                       className="rounded border border-violet-200 px-2 py-1 text-violet-700 hover:bg-violet-50"
                       onClick={(event) => {
                         event.stopPropagation();
-                        onFixSimilar(row.error || row.warning);
+                        onFixSimilar(similarPattern);
                       }}
                     >
                       Fix all similar
                     </button>
                   )}
+                  {similarPattern && (
+                    <button
+                      className="rounded border border-transparent px-2 py-1 text-indigo-700 underline-offset-2 hover:bg-indigo-50 hover:underline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onIgnoreSimilar?.(similarPattern);
+                      }}
+                    >
+                      Ignore all
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -5,6 +5,7 @@ import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import PayrollRunPage from "./pages/PayrollRunPage";
 import ProcessingPage from "./pages/ProcessingPage";
+import KnowledgeBasePage from "./pages/KnowledgeBasePage";
 import { useAuth } from "./store/AuthContext";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
 
       <Route element={<ProtectedLayout isAuthenticated={isAuthenticated} />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
         <Route path="/runs/:id/processing" element={<ProcessingPage />} />
         <Route path="/runs/:id" element={<PayrollRunPage />} />
       </Route>

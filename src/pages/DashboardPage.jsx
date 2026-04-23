@@ -9,11 +9,28 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [openModal, setOpenModal] = useState(false);
   const [isCreatingRun, setIsCreatingRun] = useState(false);
+  const [toasts, setToasts] = useState([]);
   const { runs, loading, fetchRuns, createRun } = usePayrollStore();
+
+  const pushToast = (message) => {
+    const toast = { id: `toast-${Date.now()}`, message };
+    setToasts((items) => [toast, ...items].slice(0, 3));
+    setTimeout(() => {
+      setToasts((items) => items.filter((item) => item.id !== toast.id));
+    }, 2600);
+  };
 
   useEffect(() => {
     fetchRuns();
   }, [fetchRuns]);
+
+  useEffect(() => {
+    const handler = (event) => {
+      pushToast(event?.detail?.message || "Browser storage is full. Clear local data and try again.");
+    };
+    window.addEventListener("payroll:storage-quota-exceeded", handler);
+    return () => window.removeEventListener("payroll:storage-quota-exceeded", handler);
+  }, []);
 
   const stats = useMemo(
     () => ({
@@ -32,6 +49,15 @@ export default function DashboardPage() {
       const run = await createRun(payload);
       setOpenModal(false);
       navigate(`/runs/${run.id}/processing`);
+    } catch (error) {
+      const isQuotaError =
+        error?.name === "QuotaExceededError" ||
+        String(error?.message || "").toLowerCase().includes("quota");
+      pushToast(
+        isQuotaError
+          ? "Browser storage is full. Clear local data and try again."
+          : error?.message || "Unable to create payroll run",
+      );
     } finally {
       setIsCreatingRun(false);
     }
@@ -50,6 +76,12 @@ export default function DashboardPage() {
           className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-200 transition hover:bg-sky-700"
         >
           Start Payroll Run
+        </button>
+        <button
+          onClick={() => navigate("/knowledge-base")}
+          className="rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+        >
+          Knowledge Base
         </button>
       </header>
 
@@ -84,6 +116,13 @@ export default function DashboardPage() {
         onSubmit={handleCreateRun}
         busy={isCreatingRun}
       />
+      <div className="fixed bottom-4 right-4 z-[60] space-y-2">
+        {toasts.map((toast) => (
+          <div key={toast.id} className="rounded-lg bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
+            {toast.message}
+          </div>
+        ))}
+      </div>
       </div>
     </main>
   );

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { api } from "../services/api";
 
 const STAGE_DISPLAY_ORDER = [
@@ -67,6 +67,7 @@ const buildCompactRunPayload = (run) => {
       overtimeHours: row.overtimeHours,
       weekendHours: row.weekendHours,
       holidayHours: row.holidayHours,
+      totalHours: row.totalHours,
       regularPay: row.regularPay,
       overtimePay: row.overtimePay,
       weekendPay: row.weekendPay,
@@ -103,6 +104,20 @@ const buildCompactRunPayload = (run) => {
       issues: row.issues,
       aiSuggestion: row.aiSuggestion,
       touched: row.touched,
+      sourceNotes: row.sourceNotes,
+      sourceServiceItem: row.sourceServiceItem,
+      sourcePropertyRaw: row.sourcePropertyRaw,
+      airbnbDistributionCandidate: row.airbnbDistributionCandidate,
+      distributionTargetType: row.distributionTargetType,
+      distributionReason: row.distributionReason,
+      distributionNeedsReview: row.distributionNeedsReview,
+      reservationNights: row.reservationNights,
+      reservationCheckout: row.reservationCheckout,
+      longStayEligibleByReservation: row.longStayEligibleByReservation,
+      longStayBonusFromNotes: row.longStayBonusFromNotes,
+      longStayNeedsReview: row.longStayNeedsReview,
+      longStayBonusAmount: row.longStayBonusAmount,
+      longStayEvidence: row.longStayEvidence,
     })),
   }));
 
@@ -125,6 +140,30 @@ const buildCompactRunPayload = (run) => {
   };
 };
 
+const createSafeStorage = () =>
+  createJSONStorage(() => ({
+    getItem: (name) => window.localStorage.getItem(name),
+    setItem: (name, value) => {
+      try {
+        window.localStorage.setItem(name, value);
+      } catch (error) {
+        const isQuotaError =
+          error?.name === "QuotaExceededError" ||
+          String(error?.message || "").toLowerCase().includes("quota");
+        if (isQuotaError) {
+          window.dispatchEvent(
+            new CustomEvent("payroll:storage-quota-exceeded", {
+              detail: { message: "Browser storage is full. Clear local data and try again." },
+            }),
+          );
+          return;
+        }
+        throw error;
+      }
+    },
+    removeItem: (name) => window.localStorage.removeItem(name),
+  }));
+
 export const usePayrollStore = create(
   persist(
     (set, get) => ({
@@ -137,6 +176,7 @@ export const usePayrollStore = create(
         property: "",
         searchQuery: "",
         onlyErrors: false,
+        issueTypes: [],
       },
       aiMessages: [],
       aiLoading: false,
@@ -154,6 +194,21 @@ export const usePayrollStore = create(
             [key]: value,
           },
         })),
+      toggleIssueType: (issueType) =>
+        set((state) => {
+          const selected = new Set(state.filters.issueTypes || []);
+          if (selected.has(issueType)) {
+            selected.delete(issueType);
+          } else {
+            selected.add(issueType);
+          }
+          return {
+            filters: {
+              ...state.filters,
+              issueTypes: Array.from(selected),
+            },
+          };
+        }),
       selectStage: (stageId) => set({ selectedStageId: stageId, selectedRowId: null }),
       selectRow: (rowId) => set({ selectedRowId: rowId }),
       goToPreviousStage: () =>
@@ -407,7 +462,14 @@ export const usePayrollStore = create(
 
           let fixedCount = 0;
           stage.rows.forEach((row) => {
-            if ((row.error && row.error === pattern) || (row.warning && row.warning === pattern)) {
+            const openIssueCodes = (row.issues || [])
+              .filter((issue) => issue.status === "open")
+              .map((issue) => issue.code);
+            const hasPatternMatch =
+              openIssueCodes.includes(pattern) ||
+              (row.error && row.error === pattern) ||
+              (row.warning && row.warning === pattern);
+            if (hasPatternMatch) {
               if (row.error) {
                 stage.errorCount = Math.max(0, stage.errorCount - 1);
               }
@@ -416,7 +478,11 @@ export const usePayrollStore = create(
               }
               row.error = "";
               row.warning = "";
-              row.issues = (row.issues || []).map((issue) => ({ ...issue, status: "resolved" }));
+              row.issues = (row.issues || []).map((issue) =>
+                issue.code === pattern || issue.status === "open"
+                  ? { ...issue, status: "resolved" }
+                  : issue,
+              );
               row.aiSuggestion = "Bulk fix applied";
               fixedCount += 1;
             }
@@ -439,6 +505,66 @@ export const usePayrollStore = create(
             currentRun: updatedRun,
             highlightedRowIds: [],
             affectedRowsCount: fixedCount,
+            isDirty: true,
+          };
+        }),
+      ignoreAllSimilarIssues: ({ stageId, pattern }) =>
+        set((state) => {
+          if (!state.currentRun) {
+            return state;
+          }
+          const updatedRun = structuredClone(state.currentRun);
+          const stage = updatedRun.stages.find((item) => item.id === stageId);
+          if (!stage) {
+            return state;
+          }
+
+          let ignoredCount = 0;
+          stage.rows.forEach((row) => {
+            const openIssueCodes = (row.issues || [])
+              .filter((issue) => issue.status === "open")
+              .map((issue) => issue.code);
+            const hasPatternMatch =
+              openIssueCodes.includes(pattern) ||
+              row.error === pattern ||
+              row.warning === pattern;
+            if (!hasPatternMatch) {
+              return;
+            }
+            if (row.error) {
+              stage.errorCount = Math.max(0, stage.errorCount - 1);
+            }
+            if (row.warning) {
+              stage.warningCount = Math.max(0, stage.warningCount - 1);
+            }
+            row.error = "";
+            row.warning = "";
+            row.issues = (row.issues || []).map((issue) =>
+              issue.code === pattern || issue.status === "open"
+                ? { ...issue, status: "ignored" }
+                : issue,
+            );
+            row.aiSuggestion = "Ignored by reviewer (similar issue group)";
+            ignoredCount += 1;
+          });
+
+          if (ignoredCount === 0) {
+            return state;
+          }
+
+          updatedRun.auditLog.unshift({
+            id: `audit-${Date.now()}`,
+            actor: "Payroll Manager",
+            type: "BULK_IGNORE_APPLIED",
+            details: `${ignoredCount} similar issue(s) ignored in ${stage.name}`,
+            createdAt: new Date().toISOString(),
+          });
+          updatedRun.lastUpdated = new Date().toISOString();
+
+          return {
+            currentRun: updatedRun,
+            highlightedRowIds: [],
+            affectedRowsCount: ignoredCount,
             isDirty: true,
           };
         }),
@@ -595,6 +721,7 @@ export const usePayrollStore = create(
     }),
     {
       name: "payroll-engine-store",
+      storage: createSafeStorage(),
       partialize: (state) => ({
         currentRun: state.currentRun,
         selectedStageId: state.selectedStageId,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { getWeekdayName, getWeekEnd, isMonday } from "../utils/date";
 import { parseAndValidateCsv } from "../utils/csvValidation";
 
@@ -14,14 +14,38 @@ const requiredFiles = [
   { key: "reservations", label: "Hospitable Reservations" },
 ];
 
+const formatIsoDate = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const buildCalendarDays = (monthDate) => {
+  const firstOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const startWeekday = firstOfMonth.getDay();
+  const startDate = new Date(firstOfMonth);
+  startDate.setDate(firstOfMonth.getDate() - startWeekday);
+
+  const days = [];
+  for (let i = 0; i < 42; i += 1) {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + i);
+    days.push(date);
+  }
+  return days;
+};
+
 export default function StartPayrollRunModal({ open, onClose, onSubmit, busy }) {
   const [step, setStep] = useState(1);
   const [startDate, setStartDate] = useState("");
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [fileState, setFileState] = useState({});
   const [dragOverKey, setDragOverKey] = useState("");
   const [issuesModalKey, setIssuesModalKey] = useState("");
   const [recentlyUploadedKey, setRecentlyUploadedKey] = useState("");
   const [validationError, setValidationError] = useState("");
+  const dateInputRef = useRef(null);
 
   const endDate = useMemo(() => (startDate ? getWeekEnd(startDate) : ""), [startDate]);
   const weekdayName = useMemo(() => (startDate ? getWeekdayName(startDate) : ""), [startDate]);
@@ -35,6 +59,7 @@ export default function StartPayrollRunModal({ open, onClose, onSubmit, busy }) 
   const errorCount = Object.values(fileState).filter((file) => file?.status === "Errors").length;
   const readiness = Math.round((validCount / requiredFiles.length) * 100);
   const currentIssues = issuesModalKey ? fileState[issuesModalKey] : null;
+  const calendarDays = useMemo(() => buildCalendarDays(calendarMonth), [calendarMonth]);
 
   if (!open) return null;
 
@@ -111,6 +136,15 @@ export default function StartPayrollRunModal({ open, onClose, onSubmit, busy }) 
     (step === 2 && allFilesUploaded && !hasFileErrors) ||
     step === 3;
 
+  const openDatePicker = () => {
+    if (!dateInputRef.current) return;
+    if (typeof dateInputRef.current.showPicker === "function") {
+      dateInputRef.current.showPicker();
+      return;
+    }
+    dateInputRef.current.focus();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
       <div className="w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
@@ -176,15 +210,85 @@ export default function StartPayrollRunModal({ open, onClose, onSubmit, busy }) 
             {step === 1 && (
               <div className="space-y-4">
                 <p className="text-sm text-slate-600">Select pay period start date (must be Monday).</p>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(event) => setStartDate(event.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2.5"
-                />
+                <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+                    >
+                      Prev
+                    </button>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {calendarMonth.toLocaleString("default", { month: "long", year: "numeric" })}
+                    </p>
+                    <button
+                      type="button"
+                      className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+                    >
+                      Next
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase text-slate-500">
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                      <span key={day}>{day}</span>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {calendarDays.map((day) => {
+                      const iso = formatIsoDate(day);
+                      const isCurrentMonth = day.getMonth() === calendarMonth.getMonth();
+                      const isSelected = startDate === iso;
+                      return (
+                        <button
+                          type="button"
+                          key={iso}
+                          className={`rounded px-2 py-1.5 text-xs ${
+                            isSelected
+                              ? "bg-sky-600 text-white"
+                              : isCurrentMonth
+                                ? "bg-white text-slate-700 hover:bg-sky-50"
+                                : "bg-slate-100 text-slate-400"
+                          }`}
+                          onClick={() => setStartDate(iso)}
+                        >
+                          {day.getDate()}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      ref={dateInputRef}
+                      type="date"
+                      value={startDate}
+                      onChange={(event) => {
+                        setStartDate(event.target.value);
+                        if (event.target.value) {
+                          const picked = new Date(`${event.target.value}T00:00:00`);
+                          setCalendarMonth(new Date(picked.getFullYear(), picked.getMonth(), 1));
+                        }
+                      }}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={openDatePicker}
+                    >
+                      Picker
+                    </button>
+                  </div>
+                </div>
                 {startDate && (
                   <p className="text-sm text-slate-600">
                     Selected weekday: <span className="font-semibold">{weekdayName}</span>
+                  </p>
+                )}
+                {startDate && (
+                  <p className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-medium text-slate-700">
+                    End date: {endDate}
                   </p>
                 )}
                 {startDate && !mondayValid && (
@@ -194,7 +298,7 @@ export default function StartPayrollRunModal({ open, onClose, onSubmit, busy }) 
                 )}
                 {mondayValid && (
                   <p className="inline-flex rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-sm font-medium text-emerald-700">
-                    End date auto-calculated: {endDate}
+                    Date looks valid for payroll start.
                   </p>
                 )}
               </div>

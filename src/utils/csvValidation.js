@@ -7,8 +7,11 @@ const REQUIRED_COLUMNS = {
 
 const MAPPING_RULES = {
   mileage: {
-    required: [{ field: "mileage", columnLetter: "H" }],
-    optional: [{ field: "property" }],
+    required: [
+      { field: "mileage", columnLetter: "H" },
+      { field: "property", columnLetter: "F" },
+    ],
+    optional: [],
     derived: [{ field: "employee", fromLetters: ["C", "D"], joinWith: " " }],
   },
   reservations: {
@@ -30,19 +33,18 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const normalizePropertyNameForMatching = (value) => {
+  const raw = normalizeValue(value);
+  if (!raw.includes(">>")) {
+    return raw;
+  }
+  const [left] = raw.split(">>");
+  return normalizeValue(left) || raw;
+};
+
 const letterToIndex = (letter) => letter.toUpperCase().charCodeAt(0) - 65;
 
 const getColumnKeyByLetter = (headers, letter) => headers[letterToIndex(letter)] || "";
-
-const resolveFieldValue = (row, headers, fieldRule) => {
-  if (fieldRule.columnLetter) {
-    const key = getColumnKeyByLetter(headers, fieldRule.columnLetter);
-    return key ? row[key] : undefined;
-  }
-
-  const matchingKey = headers.find((key) => key.trim().toLowerCase() === fieldRule.field.toLowerCase());
-  return matchingKey ? row[matchingKey] : undefined;
-};
 
 const hasMappedColumn = (headers, fieldRule) => {
   if (fieldRule.columnLetter) {
@@ -103,8 +105,28 @@ const mapNormalizedRow = (fileType, row) => {
       columnC: normalizeValue(pickValueByColumnLetter(row, "C")),
       columnD: normalizeValue(pickValueByColumnLetter(row, "D")),
       nameSignals,
-      property: normalizeValue(pickValue(row, ["property", "jobcode", "location", "property name"])),
-      date: normalizeValue(pickValue(row, ["date", "work date", "shift date"])),
+      property: normalizePropertyNameForMatching(
+        pickValue(row, ["property", "jobcode", "location", "property name"]),
+      ),
+      sourcePropertyRaw: normalizePropertyNameForMatching(
+        pickValue(row, ["jobcode_1", "jobcode 1", "jobcode1", "jobcode"]) ||
+          pickValueByColumnLetter(row, "M"),
+      ),
+      service_item: normalizeValue(
+        pickValue(row, ["service item", "service_item", "serviceitem"]) ||
+          pickValueByColumnLetter(row, "R"),
+      ),
+      notes: normalizeValue(
+        pickValue(row, ["notes", "note", "comments"]) ||
+          pickValueByColumnLetter(row, "U"),
+      ),
+      date: normalizeValue(
+        pickValue(row, ["date", "work date", "shift date", "local_date", "local date"]) ||
+          pickValueByColumnLetter(row, "G"),
+      ),
+      local_date: normalizeValue(
+        pickValue(row, ["local_date", "local date"]) || pickValueByColumnLetter(row, "G"),
+      ),
       hours: toNumber(pickValue(row, ["hours", "total hours", "qbt hours"]), 0),
       regularHours: toNumber(pickValue(row, ["regularhours", "regular hours", "reghours", "hours"]), 0),
       overtimeHours: toNumber(pickValue(row, ["overtimehours", "overtime hours", "othours", "ot"]), 0),
@@ -129,6 +151,7 @@ const mapNormalizedRow = (fileType, row) => {
     const combinedName = `${firstName} ${lastName}`.trim();
     const reported = toNumber(pickValue(row, ["milesreported", "mileage", "miles"]), 0);
     const verified = toNumber(pickValue(row, ["verifiedmiles", "milesverified", "expectedmiles"]), reported);
+    const propertyFromColumnF = normalizePropertyNameForMatching(pickValueByColumnLetter(row, "F"));
     return {
       employee:
         normalizeValue(pickValue(row, ["employee", "worker", "name", "employee name"])) ||
@@ -138,7 +161,9 @@ const mapNormalizedRow = (fileType, row) => {
       columnA: normalizeValue(pickValueByColumnLetter(row, "A")),
       columnB: normalizeValue(pickValueByColumnLetter(row, "B")),
       nameSignals,
-      property: normalizeValue(pickValue(row, ["property", "jobcode", "location"])),
+      property:
+        propertyFromColumnF ||
+        normalizePropertyNameForMatching(pickValue(row, ["property", "jobcode", "location"])),
       date: normalizeValue(pickValue(row, ["date", "work date"])),
       milesReported: reported,
       milesVerified: verified,
@@ -146,8 +171,24 @@ const mapNormalizedRow = (fileType, row) => {
   }
 
   return {
-    property: normalizeValue(pickValue(row, ["property", "jobcode", "location"])),
-    date: normalizeValue(pickValue(row, ["date", "reservation date"])),
+    property: normalizePropertyNameForMatching(
+      pickValue(row, ["property", "property_name", "jobcode", "location"]) ||
+        pickValueByColumnLetter(row, "F"),
+    ),
+    date: normalizeValue(
+      pickValue(row, ["date", "reservation date", "checkout_date", "checkout date"]),
+    ),
+    checkin_date: normalizeValue(
+      pickValue(row, ["checkin_date", "checkin date"]) || pickValueByColumnLetter(row, "A"),
+    ),
+    checkout_date: normalizeValue(
+      pickValue(row, ["checkout_date", "checkout date"]) || pickValueByColumnLetter(row, "B"),
+    ),
+    nights: toNumber(
+      pickValue(row, ["nights"]) || pickValueByColumnLetter(row, "J"),
+      0,
+    ),
+    status: normalizeValue(pickValue(row, ["status"]) || pickValueByColumnLetter(row, "G")),
     reservationsCount: toNumber(pickValue(row, ["reservations", "reservationcount", "count", "units"]), 0),
   };
 };
